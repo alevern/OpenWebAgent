@@ -1,0 +1,45 @@
+[tool.poetry]
+name = "openwebagent-server"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+backoff = "2.2.1"
+inquirerpy = "0.3.4"
+lxml = "4.9.3"
+playwright = "1.40.0"
+jsonlines = "^4.0.0"
+numpy = "^2.1.0"
+sentence-transformers = "2.5.1"
+torch = "^2.4.0"
+protobuf = "^5.27.3"
+beautifulsoup4 = "^4.12.3"
+toml = "^0.10.2"
+aioconsole = "^0.7.1"
+python-dotenv = "^1.0.1"
+gymnasium = "^0.29.1"
+pillow = "^10.4.0"
+evaluate = "^0.4.2"
+types-tqdm = "^4.66.0.20240417"
+tiktoken = "^0.7.0"
+aiolimiter = "^1.1.0"
+beartype = "0.12.0"
+flask = "^3.0.3"
+nltk = "^3.9.1"
+text-generation = "^0.7.0"
+transformers = "4.33.2"
+sentencepiece = "0.2.0"
+opencv-python = "^4.10.0.84"
+tqdm = "^4.66.5"
+mongoengine = "^0.28.2"
+matplotlib = "^3.9.2"
+colorama = "^0.4.6"
+openai = "^1.41.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
