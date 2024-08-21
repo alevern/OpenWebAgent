@@ -44,6 +44,9 @@ def parse_function_call(expression):
     expression = remove_comments(expression)
     # parse the string into AST
     expression = expression.strip()
+    print(f"expected command: {expression}")
+    if expression.endswith('```'):
+        expression = expression[:expression.rfind('```')]
     tree = ast.parse(expression, mode='eval')
 
     # parse function name

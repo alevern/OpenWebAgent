@@ -2,24 +2,21 @@
 
 ## Getting started
 
-1. Install required packages.
+1. Install [Poetry](https://python-poetry.org/).
+
+2. Initialize the project:
 
    ```shell
-   bash setup.sh
+   poetry init
    ```
 
-2. Configure your MongoDB Atlas, you can also save the data locally, but remember to update `config/mongo_config.yaml` to the configuration you are using.
+2. Start the mongo server (you'll need docker compose):
 
-   ```yaml
-   mongo_args:
-     base_url: "<your-url>"
-     dbname: "<your-db-name>"
-     username: "<your-username>"
+   ```shell
+   docker compose up -d
    ```
 
-   
-
-3. Set the model api key and database key in `config/server_config.yaml`, here is the a small sample for using gpt-4:
+3. Configure the server in `config/server_config.yaml`, here is the a small sample for using gpt-4:
 
    ```yaml
    planner_args:
@@ -60,6 +57,7 @@
 5. Then, you can run the server:
 
    ```shell
+   poetry shell
    python agent/run_server.py
    ```
 

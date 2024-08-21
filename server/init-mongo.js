@@ -1,8 +1,12 @@
-db = connect("mongodb://mgadmin:mgpasswd@owa-mongo:27017/admin");
-
-db = db.getSiblingDB('owa-db');
+db = db.getSiblingDB('owadb');
 db.createUser({
-  user: "owa-server",
-  pwd: "owa-secretpasswd",
-  roles: [{ role: "readWrite", db: "owa-db" }]
+  user: "owaserver",
+  pwd: "owapasswd",
+  roles: [{ role: "readWrite", db: "owadb" }]
+});
+
+db.createCollection('apps')
+
+db.apps.insertOne({
+  active: true,
 });

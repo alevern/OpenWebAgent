@@ -22,14 +22,18 @@ username = mongo_args.username
 def do_connection(db="openwebagent-demo", alias="default", base_url="127.0.0.1:27017"):
     assert os.getenv("LOG_DB_PASSWD")
     # We use mongo atlas here
+    url = f"mongodb://{username}:{os.getenv('LOG_DB_PASSWD')}@{base_url}/{db}"
+    print(f"Connecting to {url}")
     return connect(
-        host=f"mongodb://{username}:{os.getenv('LOG_DB_PASSWD')}@{db}.{base_url}/?retryWrites=true&w=majority",
+        host=url,
         alias=alias,
     )
 
 
 # Replace the default socket implementation
-do_connection(db=dbname, base_url=base_url)
+conn = do_connection(db=dbname, base_url=base_url)
+if conn:
+    print("MongoDB connected successfully!")
 
 if dump_args.session_id:
     dump_session(dump_args.session_id, dump_args.output_dir, dump_args.save_html)
