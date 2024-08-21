@@ -37,7 +37,21 @@ In fact, our plugin is ready-to-use, you can download `extension.zip` and unzip 
 
 ### Server
 
-1. First, you need to set up `config/server_config.yaml`. For other models, see `server/README.md` for more details.
+1. Install [Poetry](https://python-poetry.org/).
+
+2. Initialize the project:
+
+   ```shell
+   poetry init
+   ```
+
+2. Start the mongo server (you'll need docker compose):
+
+   ```shell
+   docker compose up -d
+   ```
+
+3. Then, you need to set up `config/server_config.yaml`. For other models, see `server/README.md` for more details.
 
    ```yaml
    planner_args:
@@ -46,33 +60,18 @@ In fact, our plugin is ready-to-use, you can download `extension.zip` and unzip 
      n_workers: 2
    ```
 
-2. Configure your MongoDB Atlas, you can also save the data locally, but remember to update `config/mongo_config.yaml` to the configuration you are using.
-
-   ```yaml
-   mongo_args:
-     base_url: "<your-url>"
-     dbname: "<your-db-name>"
-     username: "<your-username>"
-   ```
-
-3. Then, add your own api key in `.env`.
+3. Add your own api key in `.env`.
 
    ```yaml
    OPENAI_KEY="<your-token>"
-   LOG_DB_PASSWD="<your-db-password>"
+   LOG_DB_PASSWD="<your-db-password>" # use 'owapasswd'
    OPENAI_API_URL="<your-openai-url>"  # optional
-   ```
-
-4. Download the required packages.
-
-   ```bash
-   cd server
-   bash setup.sh
    ```
 
 5. Start the server and enjoy your own web agent now!
 
    ```shell
+   poetry shell
    python agent/run_server.py
    ```
 
