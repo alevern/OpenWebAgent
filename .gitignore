@@ -35,7 +35,6 @@ openwebagent-extension/
 
 *log*.txt
 server/*.png
-server/config
 
 # misc
 .DS_Store

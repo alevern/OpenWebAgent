@@ -25,7 +25,7 @@
   "host_permissions": ["<all_urls>"],
   "web_accessible_resources": [
       {
-        "resources": [ "windowOpen.js" ],
+        "resources": [ "static/js/som.js" ],
         "matches": ["<all_urls>"]
       },
       {
