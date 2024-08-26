@@ -8,6 +8,18 @@ import '../common/styles/index.less';
 
 let shadowRoot = null;
 
+let somLoaded
+
+function injectScript(filePath) {
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL(filePath);
+    document.head.appendChild(script);
+
+    script.onload = function() {
+        this.remove();  // Clean up after script is executed
+    };
+}
+
 window.addEventListener('load', function() {
     console.log('All resources have loaded!');
     const style = document.createElement('style');
@@ -30,6 +42,7 @@ window.addEventListener('load', function() {
         }
     `;
     document.head.appendChild(style);
+    injectScript('static/js/som.js');
     // execute another action
 }, true);
 
@@ -60,7 +73,7 @@ window.addEventListener('resize', () => {
 document.addEventListener('click', function(event) {
     // Check if the first element clicked is a link
     let link = event.target.closest('a');
-    
+
     console.log('Click event object triggered:', event);
     console.log('Click target event object triggered:', event.target);
 
@@ -71,7 +84,7 @@ document.addEventListener('click', function(event) {
         /^javascript: void\(0\);?$/,
         /#$/ // Ends with '#'
     ];
-      
+
     const isInvalidLink = (href) => {
         return invalidLinkPatterns.some(pattern => pattern.test(href));
     };
@@ -86,21 +99,21 @@ document.addEventListener('click', function(event) {
             // Prevent default behavior (open link)
             event.preventDefault();
             event.stopPropagation();
-                
+
             // Set the link's target to the current tab
             link.target = '_self';
             console.log("window.location: ", window.location);
-        
+
             window.location.href = link.href;
         } else if (!link.hasAttribute('target') && (!link.hasAttribute('tabindex') || !link.hasAttribute('aria-controls'))) {
             console.log("link.href: ", link.href);
             event.preventDefault();
             event.stopPropagation();
-                
+
             // Set the link's target to the current tab
             link.target = '_self';
             console.log("window.location: ", window.location);
-        
+
             window.location.href = link.href;
         }
     }
@@ -114,17 +127,76 @@ document.addEventListener('click', function(event) {
     //     console.log('Tabindex and aria-controls link clicked:', link.href);
     //     event.preventDefault();
     //     event.stopPropagation();
-        
+
     //     // You can add custom actions here
     //     window.location.href = link.href;
     // }
 }, true);
 
-try {
-    let htmlParseScript = document.createElement('script');
-    htmlParseScript.setAttribute('type', 'text/javascript');
-    htmlParseScript.src = chrome.runtime.getURL('windowOpen.js');
-    document.body.appendChild(htmlParseScript);
-} catch (err) {
-    console.log("insert script error info: ", err);
-}
+// chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+//     if (request.action === 'displaySoM') {
+//         window.postMessage({ type: 'RUN_SOM_BEFORE_CAPTURE' }, '*');
+//     } else if (request.action === 'runSOMAfterCapture') {
+//         window.postMessage({ type: 'RUN_SOM_AFTER_CAPTURE' }, '*');
+//     }
+//     return true;
+// });
+//
+// // Listen for messages from the page
+// window.addEventListener('message', (event) => {
+//     if (event.source !== window) return;
+//
+//     if (event.data.type === 'SOM_DISPLAY_DONE') {
+//         console.log('SOM script executed before capture successfully');
+//     } else if (event.data.type === 'SOM_AFTER_CAPTURE_DONE') {
+//         console.log('SOM script executed after capture successfully');
+//     }
+// });
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    let expectedResponseType;
+
+    function handlePageMessage(event) {
+        if (event.source !== window) return;  
+
+        if (event.data.type === expectedResponseType) {
+            console.log(`${event.data.type} executed`);
+            sendResponse({ status: 'success', message: `${event.data.type} executed` });
+            window.removeEventListener('message', handlePageMessage)
+        } else {
+            console.log(`[content] Unexpected response type: ${event.data.type}`);
+            // sendResponse({ status: 'error', message: `Unexpected response type: ${event.data.type}` });
+        }
+    }
+
+    window.addEventListener('message', handlePageMessage);
+
+    switch (request.action) {
+        case 'displaySoM':
+            expectedResponseType = 'SOM_DISPLAY_DONE';
+            window.postMessage({ type: 'SOM_DISPLAY' }, '*');
+            break;
+        case 'hideSoM':
+            expectedResponseType = 'SOM_HIDE_DONE';
+            window.postMessage({ type: 'SOM_HIDE' }, '*');
+            break;
+        case 'getMarks':
+            const marks = [];
+            document.querySelectorAll('[data-som]').forEach((e) => {
+                const attributes = Array.from(e.attributes)
+                    .map((attr) => (['data-som'].includes(attr.name) ? '' : `${attr.name}="${attr.value}"`))
+                    .join(' ');
+                const innerText = e.textContent?.trim();
+                const element =
+                    `<${e.tagName.toLowerCase()} ${attributes}>` + innerText + `</${e.tagName.toLowerCase()}>`;
+                marks.push({ label: e.getAttribute('data-som'), element });
+            });
+            sendResponse({ status: 'success', marks });
+            break;
+        // default:
+        //     sendResponse({ status: 'error', message: 'Invalid action' });
+        //     break;
+    }
+
+    return true
+});

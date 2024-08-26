@@ -1,3 +1,24 @@
+export async function getMarks() {
+    const marks = [];
+    document.querySelectorAll('[data-label-id]').forEach((e) => {
+        const attributes = Array.from(e.attributes)
+            .map((attr) => (['data-label-id'].includes(attr.name) ? '' : `${attr.name}="${attr.value}"`))
+            .join(' ');
+        const innerText = e.textContent?.trim();
+        const element =
+            `<${e.tagName.toLowerCase()} ${attributes}>` + innerText + `</${e.tagName.toLowerCase()}>`;
+        marks.push({ label: e.getAttribute('data-label-id'), element });
+    });
+    const viewport_size = {
+        viewport_width: window.visualViewport.width,
+        viewport_height: window.visualViewport.height
+    };
+    return {
+        marks,
+        viewport_size
+    };
+}
+
 async function getHtmlInfo() {
     let refinePrompt = {
         dom: '<{tag}{label}|{attr}{content}{subtree} >',
@@ -201,7 +222,7 @@ async function getHtmlInfo() {
         ).forEach((element) => {
             element.setAttribute("data-backend-node-id", backendId);
             backendId++;
-            
+
             var tag = element.tagName.toLowerCase?.() || "";
             var bb = element.getClientRects();
             var rect = {
@@ -232,7 +253,7 @@ async function getHtmlInfo() {
                     width: Math.round((rect.right - rect.left) * 100) / 100,
                     height: Math.round((rect.bottom - rect.top) * 100) / 100
                 };
-                
+
                 element.setAttribute("data-bbox", `${rect.left},${rect.top},${rect.width},${rect.height}`);
             }
 
@@ -246,7 +267,7 @@ async function getHtmlInfo() {
                     (text) => text.length > 0
                 )
                 element.setAttribute("data-text", texts.join(","));
-            } 
+            }
 
             // fix select issue
             if (tag == "select") {
@@ -260,7 +281,7 @@ async function getHtmlInfo() {
             if (tag == "input") {
                 var input_type = element.getAttribute("type") || "";
                 if (input_type == "checkbox") {
-                    var status = element.checked? "checked" : "not-checked";
+                    var status = element.checked ? "checked" : "not-checked";
                     element.setAttribute("data-status", status);
                 }
             }
@@ -281,14 +302,14 @@ async function getHtmlInfo() {
             // element.classList.add('possible-clickable-element');
             var vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
             var vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-            
+
             var rects = [...element.getClientRects()].filter(bb => {
                 var center_x = bb.left + bb.width / 2;
                 var center_y = bb.top + bb.height / 2;
                 var elAtCenter = document.elementFromPoint(center_x, center_y);
-            
+
                 if (!elAtCenter) return false;
-                return elAtCenter === element || element.contains(elAtCenter) 
+                return elAtCenter === element || element.contains(elAtCenter)
             }).map(bb => {
                 const rect = {
                     left: Math.max(0, bb.left),
@@ -304,10 +325,10 @@ async function getHtmlInfo() {
             });
             // var rects = [];
             var area = rects.reduce((acc, rect) => acc + rect.width * rect.height, 0);
-        
+
             const tagName = element.tagName.toLowerCase?.() || "";
             let isClickable = ((element.onclick != null) || window.getComputedStyle(element).cursor == "pointer");
-            
+
             // Insert area elements that provide click functionality to an img.
             if (tagName === "img") {
                 let mapName = element.getAttribute("usemap");
@@ -318,7 +339,7 @@ async function getHtmlInfo() {
                     if (map && (imgClientRects.length > 0)) isClickable = true;
                 }
             }
-        
+
             if (!isClickable) {
                 const role = element.getAttribute("role");
                 const clickableRoles = [
@@ -336,30 +357,30 @@ async function getHtmlInfo() {
                 } else {
                     const contentEditable = element.getAttribute("contentEditable");
                     if (
-                    contentEditable != null &&
-                    ["", "contenteditable", "true"].includes(contentEditable.toLowerCase())
+                        contentEditable != null &&
+                        ["", "contenteditable", "true"].includes(contentEditable.toLowerCase())
                     ) {
-                    isClickable = true;
+                        isClickable = true;
                     }
                 }
             }
-        
+
             // Check for jsaction event listeners on the element.
             if (!isClickable && element.hasAttribute("jsaction")) {
                 const jsactionRules = element.getAttribute("jsaction").split(";");
                 for (let jsactionRule of jsactionRules) {
                     const ruleSplit = jsactionRule.trim().split(":");
                     if ((ruleSplit.length >= 1) && (ruleSplit.length <= 2)) {
-                    const [eventType, namespace, actionName] = ruleSplit.length === 1
-                        ? ["click", ...ruleSplit[0].trim().split("."), "_"]
-                        : [ruleSplit[0], ...ruleSplit[1].trim().split("."), "_"];
-                    if (!isClickable) {
-                        isClickable = (eventType === "click") && (namespace !== "none") && (actionName !== "_");
-                    }
+                        const [eventType, namespace, actionName] = ruleSplit.length === 1
+                            ? ["click", ...ruleSplit[0].trim().split("."), "_"]
+                            : [ruleSplit[0], ...ruleSplit[1].trim().split("."), "_"];
+                        if (!isClickable) {
+                            isClickable = (eventType === "click") && (namespace !== "none") && (actionName !== "_");
+                        }
                     }
                 }
             }
-        
+
             if (!isClickable) {
                 const clickableTags = [
                     "input",
@@ -375,7 +396,7 @@ async function getHtmlInfo() {
                 ];
                 isClickable = clickableTags.includes(tagName);
             }
-            
+
             if (!isClickable) {
                 if (tagName === "label")
                     isClickable = (element.control != null) && !element.control.disabled;
@@ -390,7 +411,7 @@ async function getHtmlInfo() {
             if (!isClickable && className && className.toLowerCase().includes("button")) {
                 isClickable = true;
             }
-        
+
             // Elements with tabindex are sometimes useful, but usually not. We can treat them as second
             // class citizens when it improves UX, so take special note of them.
             const tabIndexValue = element.getAttribute("tabindex");
@@ -398,14 +419,14 @@ async function getHtmlInfo() {
             if (!isClickable && !(tabIndex < 0) && !isNaN(tabIndex)) {
                 isClickable = true;
             }
-        
+
             const idValue = element.getAttribute("id");
             const id = idValue ? idValue.toLowerCase() : "";
             if (isClickable && area == 0) {
                 const textValue = element.textContent.trim().replace(/\s{2,}/g, ' ');
                 let clickable_msg = `${tagName}[id=${id}] ${isClickable} (${area}) ${textValue}`
             }
-        
+
             return {
                 element: element,
                 include: isClickable,
@@ -414,10 +435,10 @@ async function getHtmlInfo() {
                 text: element.textContent.trim().replace(/\s{2,}/g, ' ')
             };
         })
-        .filter(item =>
-            item.include &&
-            (item.area >= 1)
-        );
+            .filter(item =>
+                item.include &&
+                (item.area >= 1)
+            );
 
         // items = items.filter(x => !items.some(y => x.element.contains(y.element) && !(x == y)))
         console.log("Filtered items: ", items);
@@ -444,7 +465,7 @@ async function getHtmlInfo() {
 
         var vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
         var vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-        
+
         // items = items.filter(
         //     x => !items.some(y => x.contains(y) && !(x == y))
         // )
@@ -475,13 +496,13 @@ async function getHtmlInfo() {
                 };
                 if (rect.width > 0 || rect.height > 0) {
                     keep = true;
-                    if (index >= 0) { 
+                    if (index >= 0) {
                         // id = int2str(index++);
                         id = index++;
                         element.setAttribute("data-label-id", id);
                     }
                     var childNodes = element.childNodes;
-                    
+
                     for (var i = 0; i < childNodes.length; i++) {
                         if (childNodes[i].nodeType == Node.TEXT_NODE) {
                             text += childNodes[i].textContent;
@@ -489,7 +510,7 @@ async function getHtmlInfo() {
                     }
                 }
             }
-            
+
             return {
                 keep: true,
                 id,
@@ -516,13 +537,13 @@ async function getHtmlInfo() {
                 "href": element.getAttribute("href") || "",
             };
         }
-        
+
         var all_items = Array.prototype.slice.call(
             document.querySelectorAll("*")
         ).map((element) => {
             return getElementInfo(element);
         });
-        
+
         var clickable_items = Array.prototype.slice.call(
             document.querySelectorAll("*")
         ).filter(
@@ -530,9 +551,9 @@ async function getHtmlInfo() {
         ).map((element) => {
             return getElementInfo(element);
         });
-        
+
         return {
-            all_elements: all_items, 
+            all_elements: all_items,
             clickable_elements: clickable_items
         };
     }
@@ -567,7 +588,7 @@ async function getHtmlInfo() {
             // get window size
             let [wx, wy, ww, wh] = windowSize;
             let [x, y, w, h] = rect2tuple(bound);
-            
+
             if (x === null || y === null || w === null || h === null) return false;
 
             if ((x + w) < 0 || x > ww || (y + h) < 0 || y > wh) {
@@ -588,7 +609,7 @@ async function getHtmlInfo() {
             }
             return true;
         }
-        
+
 
         function _dfs(node, parKeep) {
             let bid = node.getAttribute("data-backend-node-id") || '';
@@ -609,7 +630,7 @@ async function getHtmlInfo() {
             // keep attributes if needed
             let keepAttrs = basic_attrs;
 
-            for(let i = 0; i < keepAttrs.length; i++) {
+            for (let i = 0; i < keepAttrs.length; i++) {
                 if (!Array.from(node.attributes).map(attr => attr.name).includes(keepAttrs[i]) || !checkAttr(keepAttrs[i], node)) {
                     continue;
                 }
@@ -626,12 +647,12 @@ async function getHtmlInfo() {
 
             let haveText = text.length > 0 || (classes.length - ("data-bbox" in classes ? 1 : 0) > 0);
             parKeep = keepElement && tag === 'select';
-            
+
             let parts = [];
             let clickableCount = 0;
             let children = node.children;
 
-            
+
             for (const child of children) {
                 if (child.nodeType === Node.ELEMENT_NODE) {
                     let childRes = _dfs(child, parKeep);
@@ -670,7 +691,7 @@ async function getHtmlInfo() {
         return new Promise((resolve) => {
             setTimeout(resolve, timeout);
         });
-    };    
+    };
 
     const checkPageLoaded = () => {
         return new Promise((resolve, reject) => {
@@ -746,7 +767,7 @@ async function getHtmlInfo() {
                 document.body.removeChild(item);
             });
         })();
-        
+
         packet['modified_html'] = document.documentElement.outerHTML;
 
         // element info script
@@ -781,7 +802,7 @@ async function getHtmlInfo() {
         ctx = ctx ? ctx.replace(/\s+/g, ' ').trim() : '';
         // ctx = ctx.replace(/<[^>]*\bstyle=["']?[^'">]*\bdisplay\s*:\s*none;?[^'">]*["']?[^>]*>.*?<\/[^>]+>/gi, '');
         // ctx = ctx.replace(/<[^>]*\bstyle=["']?[^'">]*\bopacity\s*:\s*0;?[^'">]*["']?[^>]*>.*?<\/[^>]+>/gi, '');
-        
+
         // search for <meta charset="..."> and update charset
         const charsetMatch = ctx.match(/<meta charset="([^"]*)">/);
         let parser = new DOMParser({
@@ -790,7 +811,7 @@ async function getHtmlInfo() {
                 encoding: 'utf-8'
             }
         });
-        
+
         if (charsetMatch) {
             const charset = charsetMatch[1];
             parser = new DOMParser({
@@ -803,17 +824,17 @@ async function getHtmlInfo() {
         } else {
             console.log('Charset not found');
         }
-    
+
         // parse HTML string into DOM tree
         let doc = parser.parseFromString(ctx, 'text/html');
-        
+
         // Function to remove elements with display: none in inline style
         function removeHiddenElements(doc) {
             const elements = doc.querySelectorAll('*');
             elements.forEach(el => {
                 const style = el.getAttribute('style');
                 if (style && (
-                    style.includes('display: none') || 
+                    style.includes('display: none') ||
                     style.includes('display:none') ||
                     style.includes('visibility: hidden') ||
                     style.includes('visibility:hidden') ||
@@ -835,7 +856,7 @@ async function getHtmlInfo() {
         // // Function to remove elements whose content is purely style-related
         // function removeStyleOnlyElements(doc) {
         //     const selfClosingTags = ['INPUT', 'IMG', 'TEXTAREA'];
-    
+
         //     const allElements = doc.querySelectorAll('*');
         //     allElements.forEach(el => {
         //         // If the element has no child nodes or only style/script nodes, remove it
@@ -851,7 +872,7 @@ async function getHtmlInfo() {
         //         }
         //     });
         // }
-    
+
         // Apply the removal functions
         // removeStyleOnlyElements(doc);
         removeHiddenElements(doc);
@@ -872,12 +893,12 @@ async function getHtmlInfo() {
         // Remove <img> tags
         // htmlString = htmlString.replace(/<img[^>]*>/gi, '');
         htmlString = htmlString.replace(/<br[^>]*>/gi, '');
-    
+
         // Remove <meta> tags
         htmlString = htmlString.replace(/<meta[^>]*>/gi, '');
         // Remove all id attributes
         // htmlString = htmlString.replace(/\s*id\s*=\s*["'][^"']*["']/g, '');
-        
+
         // Remove all data-bbox attributes
         htmlString = htmlString.replace(/\s*data-text\s*=\s*["'][^"']*["']/g, '');
         htmlString = htmlString.replace(/\s*title\s*=\s*["'][^"']*["']/g, '');
@@ -893,9 +914,9 @@ async function getHtmlInfo() {
         htmlString = htmlString.replace(/<body\s*>/g, '<body>');
 
         // if (htmlString.length > 16385) {
-            // htmlString = htmlString.substring(0, 16385);
+        // htmlString = htmlString.substring(0, 16385);
         // }
-    
+
         return htmlString;
     }
     try {

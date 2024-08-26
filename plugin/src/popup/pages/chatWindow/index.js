@@ -8,7 +8,7 @@ import GlobalInput from "../../components/GlobalInput";
 import Answer from '../../components/Answer';
 import UserSvg from '@/assets/user.svg';
 import AnswerSvg from "@/assets/answer.png";
-import getHtmlInfo from '../../../common/js/getHtmlInfo';
+import { getMarks } from '../../../common/js/getHtmlInfo';
 import DislikeSvg from "@/assets/dislike.svg";
 import LikeSvg from "@/assets/like.svg";
 import './index.less';
@@ -99,12 +99,73 @@ const ChatWindow = () => {
     });
   };
 
-  const fetchDataAndDecode = async (data, sessionId) => {
-    const url = 'http://127.0.0.1:24080/v1/controller'; // TODO: you should change this URL into yours.
-    const res = await fetchChat(url, {
-      "session_id": sessionId,
-      ...data
-    });
+  const createAndStartAgent = async () => {
+    const url = 'http://127.0.0.1:5005';
+    const agentOptions = {
+      synthesis: {
+        tokenTrigger: 26,
+        messageShare: 16
+      },
+      prompt: "JSON",
+      chatOptions: {
+        model: "gpt-4o-2024-08-06",
+        chatType: "ChatEmbeddedMemory",
+        promptFormat: "JSON"
+      }
+    }
+    // create Agent
+    let agentId = -1;
+    try {
+      const resCreate = await fetch(url + '/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(agentOptions)
+      });
+
+      if (resCreate.status !== 200 || !resCreate.ok) {
+        console.error("create agent failed:", resCreate);
+        return -1;
+      }
+      const data = await resCreate.json();
+      console.log("resCreate: ", JSON.stringify(data));
+      agentId = data.id;
+    } catch (error) {
+      console.error('Error with create agent request:', error);
+      return -1;
+    }
+
+    console.log("agentId: ", agentId);
+
+    // start Agent
+    try {
+      const resStart = await fetch(url + '/start/' + agentId, {
+        method: 'GET',
+      });
+
+      if (resStart.status === 404) {
+        console.error("[start] agent does not exist:");
+        return -1;
+      }
+
+      if (resStart.status !== 202 || !resStart.ok) {
+        console.error("[start] agent failed:", resStart);
+        return -1;
+      }
+
+    } catch (error) {
+      console.error('[start] Error with start agent request:', error);
+      return -1;
+    }
+
+    return agentId;
+  }
+
+  let agentId = -1;
+  const fetchDataAndDecode = async (data, agentId) => {
+    const url = `http://127.0.0.1:5005/send/${agentId}`;
+    const res = await fetchChat(url, data);
 
     if (res.status !== 200 || !res.ok) {
       console.error("Fetch failed:", res);
@@ -138,6 +199,9 @@ const ChatWindow = () => {
   const onPressEnter = async (value) => {
     if (loading) return;
     if (value) {
+      if (agentId < 0) {
+        agentId = await createAndStartAgent();
+      }
       if (isPaused.current) {
         isPaused.current = false;
       }
@@ -155,6 +219,7 @@ const ChatWindow = () => {
       const chatLoop = async () => {
         let currentRound = 1;
         let currentExit = false;
+        let feedback = value;
 
         while (currentRound <= 30 && !currentExit) {
           console.log("isPaused current: ", isPaused.current);
@@ -172,11 +237,19 @@ const ChatWindow = () => {
           }
 
           try {
-            const response = await processChatInstruction(value);
-
+            const response = await processChatInstruction(feedback);
             if (response && response.status === 'success') {
-              const responseData = await fetchDataAndDecode(response.data, localSessionId);
-              if (!responseData) continue;
+              const { instruction, image, html_text } = response.data;
+              const responseData = await fetchDataAndDecode({
+                text: `${instruction}\n\n${html_text}`,
+                images: [image],
+                timestamp: Date.now()
+              }, agentId);
+              if (!responseData) {
+                console.log("Failed to obtain command from LLM, retrying...");
+                new Promise(resolve => setTimeout(resolve, 1000));
+                continue;
+              }
 
               console.log('Response Data:', responseData);
               console.log('localSessionId: ', localSessionId);
@@ -185,12 +258,12 @@ const ChatWindow = () => {
               setSessionId(responseData.session_id);
 
               // const action = await parseAction(responseData.response);
-              if (responseData.response && responseData.response.includes('exit')) {
+              if (responseData.command && responseData.command.name === 'finish') {
                 setExit(true);
                 setLoading(false);
                 setIsFinished(true);
 
-                let messsageMatch = responseData.response.match(/message="([^"]*)"/);
+                let messsageMatch = responseData.command.match(/message="([^"]*)"/);
                 let message = messsageMatch ? messsageMatch[1] : null;
                 let content = {
                   "operation": "do",
@@ -224,9 +297,13 @@ const ChatWindow = () => {
               }
 
               console.log("response.data.viewport_size: ", response.data.viewport_size);
-              const result = await executeScriptOnActiveTab(responseData.response, responseData.element_id ? responseData.element_id : 0, responseData.element_bbox ? responseData.element_bbox : { "height": 0, "width": 0, "x": 0, "y": 0 }, response.data.viewport_size);
+              const result = await executeScriptOnActiveTab(responseData.command, responseData.element_bbox ? responseData.element_bbox : { "height": 0, "width": 0, "x": 0, "y": 0 }, response.data.viewport_size);
               if (result) {
                 await addBotMessage(responseData.session_id, responseData.round, result);
+                if (result.kwargs.instruction) {
+                  feedback = result.kwargs.instruction;
+                }
+
                 setLoading(false);
               }
 
@@ -270,57 +347,80 @@ const ChatWindow = () => {
   const processChatInstruction = (instruction) => {
 
     return new Promise((resolve, reject) => {
-      chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
-        console.log("Captured visible tab.");
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (chrome.runtime.lastError) {
-            console.error("chrome.tabs.query error:", chrome.runtime.lastError);
-            return reject(chrome.runtime.lastError);
-          }
+      chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+        if (chrome.runtime.lastError) {
 
-          if (!tabs.length) {
-            console.error("No active tabs found.");
-            return reject(new Error("No active tabs found"));
-          }
+          console.error("chrome.tabs.query error:", chrome.runtime.lastError);
+          return reject(chrome.runtime.lastError);
+        }
 
-          const currentTab = tabs[0];
-          const currentTabId = currentTab.id;
-          const currentTabUrl = currentTab.url;
+        if (!tabs.length) {
+          console.error("No active tabs found.");
+          return reject(new Error("No active tabs found"));
+        }
 
-          if (!currentTabUrl || currentTabUrl.startsWith('devtools://')) {
-            console.error("Cannot access devtools URL.");
-            return reject(new Error("Cannot access devtools URL"));
-          }
+        const currentTab = tabs[0];
+        const currentTabId = currentTab.id;
+        const currentTabUrl = currentTab.url;
 
-          chrome.scripting.executeScript({
-            target: { tabId: currentTabId, },
-            func: getHtmlInfo,
-          }, (results) => {
-            if (results && results[0] && results[0].result) {
-              const { html_text, viewport_size } = results[0].result;
+        if (!currentTabUrl || currentTabUrl.startsWith('devtools://')) {
+          console.error("Cannot access devtools URL.");
+          return reject(new Error("Cannot access devtools URL"));
+        }
 
-              const image = dataUrl;
-              resolve({
-                status: "success",
-                data: {
-                  instruction,
-                  html_text,
-                  image,
-                  url: currentTabUrl,
-                  viewport_size,
-                }
+        chrome.tabs.sendMessage(currentTabId, { action: 'displaySoM' }, function(response) {
+          if (response && response.status === 'success') {
+            console.log('SOM script executed before capture successfully');
+            chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
+              console.log("Captured visible tab.");
+              const image = dataUrl.split(",")[1];
+
+                chrome.tabs.sendMessage(currentTabId, { action: 'hideSoM' }, function(response) {
+                  if (response && response.status === 'success') {
+                    console.log('SOM script executed after capture successfully');
+                  } else {
+                    console.error('Failed to execute SOM script after capture:', response.message);
+                  }
+                });
+
+                chrome.scripting.executeScript({
+                  target: { tabId: currentTabId, },
+                  func: getMarks,
+                  // func: getHtmlInfo,
+                }, (results) => {
+                  if (results && results[0] && results[0].result) {
+                    const { marks, viewport_size } = results[0].result;
+
+                    const html_text =
+                      'LABELLING:\nThe labels on the screenshot correspond to the following elements: \n' +
+                      // 'Active elements on the page:\n' +
+                      marks.map(({ label, element }) => `${label}: ${element}`).join('\n')
+
+                    resolve({
+                      status: "success",
+                      data: {
+                        instruction,
+                        html_text,
+                        image,
+                        url: currentTabUrl,
+                        viewport_size,
+                      }
+                    });
+                  } else {
+                    console.log("Request Failed to execute script.");
+                    reject(new Error("Request Failed to execute script"));
+                  }
               });
-            } else {
-              console.log("Request Failed to execute script.");
-              reject(new Error("Request Failed to execute script"));
-            }
-          });
+            });
+          } else {
+            console.log("Failed to execute processChatInstruction script.");
+          }
         });
-      });
+      })
     });
   }
 
-  const executeScriptOnActiveTab = async (response, element_id, element_bbox, viewport_size) => {
+  const executeScriptOnActiveTab = async (command, element_bbox, viewport_size) => {
     return new Promise((resolve, reject) => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (chrome.runtime.lastError) {
@@ -342,18 +442,21 @@ const ChatWindow = () => {
           return reject(new Error("Cannot access devtools URL"));
         }
 
-        chrome.scripting.executeScript({
-          target: { tabId: currentTabId },
-          func: doAction,
-          args: [currentTabUrl, response, element_id, element_bbox, viewport_size]
-        }, (results) => {
-          if (results && results[0] && results[0].result) {
-            resolve(results[0].result);
-          } else {
-            console.log("Failed to execute script.");
-            reject(new Error("Failed to execute script"));
-          }
-        });
+        chrome
+          .scripting.executeScript({
+            target: { tabId: currentTabId },
+            func: doAction,
+            args: [currentTabUrl, command, element_bbox, viewport_size]
+          }, (results) => {
+            const resultsStr = JSON.stringify(results, null, 2)
+            if (results && results[0] && results[0].result) {
+              console.log(`Successfully executed doAction script. Result: ${resultsStr}`);
+              resolve(results[0].result);
+            } else {
+              console.log(`Failed to execute activeTab.doAction script. Result: ${resultsStr}`);
+              reject(new Error(`Failed to execute activeTab script. Result: ${resultsStr}`));
+            }
+          });
       });
     });
   };
@@ -381,21 +484,15 @@ const ChatWindow = () => {
     });
   };
 
-  async function doAction(currentTabUrl, response, element_id, element_bbox, viewport_size) {
-    if (response) {
-      console.log("Response:", response);
-      let actionMatch = response.match(/action="([^"]*)"/);
-      const argumentMatch = response.match(/argument="([^"]*)"/);
-      const instructionMatch = response.match(/instruction="((?:\\"|[^"])*)"/);
-      const queryMatch = response.match(/query="([^"]*)"/);
-      const withScreenInfoMatch = response.match(/with_screen_info="([^"]*)"/);
-      console.log("actionMatch: ", actionMatch);
-      let actionName = actionMatch ? actionMatch[1] : null;
+  async function doAction(currentTabUrl, command, element_bbox, viewport_size) {
+    if (command) {
+      console.log("command:", JSON.stringify(command));
+      let actionName = command.name || '';
       console.log("actionName: ", actionName);
-      const argument = argumentMatch ? argumentMatch[1] : null;
-      const instruction = instructionMatch ? instructionMatch[1].replace(/\\"/g, '"') : null;
-      const query = queryMatch ? queryMatch[1] : null;
-      const withScreenInfo = withScreenInfoMatch ? withScreenInfoMatch[1] : null;
+      const args = command.args || {};
+      const element_id = args.label || '';
+      let instruction = '';
+      let argument = '';
 
       let center_x = element_bbox['x'] + element_bbox['width'] / 2;
       let center_y = element_bbox['y'] + element_bbox['height'] / 2;
@@ -493,8 +590,8 @@ const ChatWindow = () => {
         const mouseMoveEvent = new MouseEvent('mousemove', {
           // clientX: x,
           // clientY: y,
-          bubbles: true, 
-          cancelable: true, 
+          bubbles: true,
+          cancelable: true,
           view: window
         });
         element.dispatchEvent(mouseMoveEvent);
@@ -589,33 +686,48 @@ const ChatWindow = () => {
         });
       }
 
-      if (actionName === 'Click') {
+      if (actionName === 'click') {
         let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
-        if (element) {
-          element.style.setProperty('border', '4px solid green', 'important');
-          await waitForTimeout(1500);
-          element.style.border = '';
-          console.log("click element", element);
-          await simulateMouseClick(element, center_x, center_y, 'left')
+        if (!element) {
+          instruction = `Could not find element ${element_id}`
         }
+        element.style.setProperty('border', '4px solid green', 'important');
+        await waitForTimeout(1500);
+        element.style.border = '';
+        console.log("click element", element);
+        await simulateMouseClick(element, center_x, center_y, 'left')
+        instruction = `Clicked element ${element_id}`
         result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
-      } else if (actionName === 'Right Click') {
+        // } else if (actionName === 'Right Click') {
+        //   let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
+        //   if (!element) {
+        //     instruction = `Could not find element ${element_id}`
+        //     result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+        //     return result
+        //   }
+        //   console.log("Right element", element);
+        //   element.style.setProperty('border', '4px solid green', 'important');
+        //   await waitForTimeout(1500);
+        //   element.style.border = '';
+        //   await element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, view: window }));
+        //   instruction = `Right clicked element ${element_id}`
+        //   result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+      } else if (actionName === 'fill') {
         let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
-        if (element) {
-          console.log("Right element", element);
-          element.style.setProperty('border', '4px solid green', 'important');
-          await waitForTimeout(1500);
-          element.style.border = '';
-          await element.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, view: window}));
+        if (!element) {
+          instruction = `Could not find element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
         }
-        result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
-      } else if (actionName === 'Type') {
-        let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
-        if (element) {
-          element.style.setProperty('border', '4px solid green', 'important');
-          await waitForTimeout(1500);
-          element.style.border = '';
+        if (!args.value) {
+          instruction = `No value to type in element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
         }
+        argument = args.value;
+        element.style.setProperty('border', '4px solid green', 'important');
+        await waitForTimeout(1500);
+        element.style.border = '';
         if (element && element.tagName.toLowerCase() !== 'input') {
           for (var i = 0; i < element.childNodes.length; i++) {
             if (element.childNodes[i].nodeType === Node.ELEMENT_NODE && element.childNodes[i].tagName.toLowerCase() === 'input') {
@@ -632,7 +744,9 @@ const ChatWindow = () => {
           var iframeDocument = iframe.contentDocument || iframe.contentWindow.document;
           if (!iframeDocument) {
             console.error('No document found in iframe');
-            return;
+            instruction = 'No document found in iframe'
+            result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+            return result
           }
 
           // Change the target element to the actual input area inside the iframe
@@ -763,7 +877,7 @@ const ChatWindow = () => {
           let clearElement = editorContent.querySelector('.public-DraftStyleDefault-block.public-DraftStyleDefault-ltr');
           if (!window.location.href.includes('.zhihu.com') && clearElement) {
             console.log("element.isContentedEditable: ", editorContent.isContentedEditable);
-            
+
             waitForTimeout(500);
             clearElement.innerHTML = '';
           }
@@ -831,7 +945,7 @@ const ChatWindow = () => {
         }
         // Zhihu uses neither textarea nor input for typing, which uses the draft-x plugin
         console.log("Type Element: ", element);
-        if (element && (element.classList.contains('public-DraftStyleDefault-block') || element.classList.contains('public-DraftEditor-content') || element.classList.contains('DraftEditor-editorContainer'))&& (element.tagName.toLowerCase() === "div") && !window.location.href.includes('.douban.com')) {
+        if (element && (element.classList.contains('public-DraftStyleDefault-block') || element.classList.contains('public-DraftEditor-content') || element.classList.contains('DraftEditor-editorContainer')) && (element.tagName.toLowerCase() === "div") && !window.location.href.includes('.douban.com')) {
           if (window.location.href.includes('.zhihu.com')) {
             clearDraftEditorContent();
             simulateInput(argument[0]);
@@ -842,67 +956,77 @@ const ChatWindow = () => {
             simulateInput(argument);
           }
         }
-
+        instruction = `Typed ${argument} in element ${element_id}`;
         result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction, "argument": argument }, "bbox": element_bbox };
       } else if (actionName === 'Search') {
         let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
-        if (element) {
-          element.style.setProperty('border', '4px solid green', 'important');
-          await waitForTimeout(1500);
-          element.style.border = '';
-          let form = element.closest('form');
-          var submitButton = form && form.querySelector('button[type="submit"]');
-          var inputSubmitButton = form && form.querySelector('input[type="submit"]');
-          if (form && form.checkValidity() && submitButton && !submitButton.disabled) {
-            console.log("button form: ", form);
-            element.value = argument;
-            form.target = '_self';
-            await waitForTimeout(500);
+        if (!element) {
+          instruction = `Could not find element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
+        }
+        element.style.setProperty('border', '4px solid green', 'important');
+        await waitForTimeout(1500);
+        element.style.border = '';
+        let form = element.closest('form');
+        var submitButton = form && form.querySelector('button[type="submit"]');
+        var inputSubmitButton = form && form.querySelector('input[type="submit"]');
+        if (form && form.checkValidity() && submitButton && !submitButton.disabled) {
+          console.log("button form: ", form);
+          element.value = argument;
+          form.target = '_self';
+          await waitForTimeout(500);
+          form.submit();
+          instruction = `Submitted form by clicking element ${element_id}`
+        } else if (form && form.checkValidity() && inputSubmitButton && !inputSubmitButton.disabled) {
+          element.value = argument;
+          form.target = '_self';
+          await waitForTimeout(500);
+          inputSubmitButton.click();
+          instruction = `Submitted form by clicking element ${element_id}`
+        } else {
+          // Select all with key comb "Meta+A" and delete all content with "Backspace"
+          await simulateCombinationKeyPress(element, 'Meta', 'A');
+          await simulateKeyPress(element, 'Backspace');
+          // Type content
+          await simulateTyping(element, argument);
+          await waitForTimeout(2000);
+          await simulateEnterKey(element);
+
+          // Special handle due to Weibo design issue, these codes can be removed.
+          // if ((window.location.href.includes('.baidu.com') || window.location.href.includes('x.com')) && form && form.checkValidity()) {
+          //   if (window.location.href.includes('tieba.baidu.com')) {
+          //     window.location.href = `https://tieba.baidu.com/f?ie=utf-8&kw=${encodeURIComponent(argument)}&fr=search`;
+          //   } else if (window.location.href.includes('x.com')) {
+          //     window.location.href = `https://x.com/search?q=${encodeURIComponent(argument)}`;
+          //   } else {
+          //     form.submit();
+          //   }
+          // }
+
+          if (window.location.href.includes('https://arxiv.org/') && form && form.checkValidity()) {
             form.submit();
-          } else if (form && form.checkValidity() && inputSubmitButton && !inputSubmitButton.disabled) {
-            element.value = argument;
-            form.target = '_self';
-            await waitForTimeout(500);
-            inputSubmitButton.click();
-          } else {
-            // Select all with key comb "Meta+A" and delete all content with "Backspace"
-            await simulateCombinationKeyPress(element, 'Meta', 'A');
-            await simulateKeyPress(element, 'Backspace');
-            // Type content
-            await simulateTyping(element, argument);
-            await waitForTimeout(2000);
-            await simulateEnterKey(element);
-
-            // Special handle due to Weibo design issue, these codes can be removed.
-            if ((window.location.href.includes('.baidu.com') || window.location.href.includes('x.com')) && form && form.checkValidity()) {
-              if (window.location.href.includes('tieba.baidu.com')) {
-                window.location.href = `https://tieba.baidu.com/f?ie=utf-8&kw=${encodeURIComponent(argument)}&fr=search`;
-              } else if (window.location.href.includes('x.com')) {
-                window.location.href = `https://x.com/search?q=${encodeURIComponent(argument)}`;
-              } else {
-                form.submit();
-              }
-            }
-
-            if (window.location.href.includes('https://arxiv.org/') && form && form.checkValidity()) {
-              form.submit();
-            }
-
-            if ((window.location.href.includes('https://www.weibo.com') || window.location.href.includes('https://weibo.com') || window.location.href.includes('https://s.weibo.com')) && argument) {
-              window.location.href = `https://s.weibo.com/weibo?q=${encodeURIComponent(argument)}`;
-            }
           }
+
+          if ((window.location.href.includes('https://www.weibo.com') || window.location.href.includes('https://weibo.com') || window.location.href.includes('https://s.weibo.com')) && argument) {
+            window.location.href = `https://s.weibo.com/weibo?q=${encodeURIComponent(argument)}`;
+          }
+          instruction = `Typed ${argument} in element ${element_id}`
         }
         result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction, "argument": argument }, "bbox": element_bbox };
 
       } else if (actionName === 'Hover') {
-        let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);
-        if (element) {
-          element.style.setProperty('border', '4px solid green', 'important');
-          await waitForTimeout(1500);
-          element.style.border = '';
-          await simulateMouseMove(element, center_x, center_y);
+        let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
+        if (!element) {
+          instruction = `Could not find element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
         }
+        element.style.setProperty('border', '4px solid green', 'important');
+        await waitForTimeout(1500);
+        element.style.border = '';
+        await simulateMouseMove(element, center_x, center_y);
+        instruction = `Hovered on element ${element_id}`
         result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
       } else if (actionName === 'Scroll Down') {
         const htmlElement = document.documentElement;
@@ -918,7 +1042,8 @@ const ChatWindow = () => {
         removeOverflowHidden(bodyElement);
         window.scrollBy(0, (viewport_size['viewport_height'] * 2.0 / 3));
         console.log("(viewport_size['viewport_height'] * 2.0 / 3): ", (viewport_size['viewport_height'] * 2.0 / 3));
-        result = { "operation": "do", "action": actionName };
+        instruction = `Scrolled down on element ${element_id}`
+        result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
       } else if (actionName === 'Scroll Up') {
         const htmlElement = document.documentElement;
         const bodyElement = document.body;
@@ -935,67 +1060,93 @@ const ChatWindow = () => {
         result = { "operation": "do", "action": actionName };
       } else if (actionName === 'Press Enter') {
         let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
-        if (element) {
-          element.style.setProperty('border', '4px solid green', 'important');
-          await waitForTimeout(1500);
-          element.style.border = '';
-          // await page.keyboard.press('Enter');
-          await simulateKeyPress(element, 'Enter');
-          console.log("Press Enter element: ", element);
+        if (!element) {
+          instruction = `Could not find element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
         }
-
+        element.style.setProperty('border', '4px solid green', 'important');
+        await waitForTimeout(1500);
+        element.style.border = '';
+        // await page.keyboard.press('Enter');
+        await simulateKeyPress(element, 'Enter');
+        console.log("Press Enter element: ", element);
+        instruction = `Pressed Enter on element ${element_id}`
         result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction } };
-      } else if (actionName === 'Select Dropdown Option') {
+      } else if (actionName === 'select') {
         let element = await document.querySelector(`[data-label-id='${element_id}']`) || document.querySelector(`[data-bbox='${element_bbox.x, element_bbox.y, element_bbox.width, element_bbox.height}']`) || document.querySelector(`[data-backend-node-id='${element_id}']`);;
-        if (element) {
-          element.style.setProperty('border', '4px solid green', 'important');
-          await waitForTimeout(1500);
-          element.style.border = '';
-          if (element.tagName.toLowerCase() === 'select') {
-            let optionFound = false;
-            for (let option of element.options) {
-              if (option.text === argument || option.value === argument) {
-                element.value = option.value;
-                option.selected = true;
-                element.dispatchEvent(new Event('change', { bubbles: true }));
-                optionFound = true;
-                console.log(`Selected option: ${option.text}`);
-                break;
-              }
-            }
-            if (!optionFound) {
-              console.error(`Option "${argument}" not found in <select> element.`);
-            }
-          } else if (element.tagName.toLowerCase() === 'input' && element.type === 'radio') {
-            // handle radio
-            let radioGroup = document.getElementsByName(element.name);
-            let optionFound = false;
-            for (let radio of radioGroup) {
-              if (radio.value === argument || radio.id === argument) {
-                radio.checked = true;
-                radio.dispatchEvent(new Event('change', { bubbles: true }));
-                optionFound = true;
-                console.log(`Selected radio button: ${radio.value}`);
-                break;
-              }
-            }
-            if (!optionFound) {
-              console.error(`Radio button with value or id "${argument}" not found.`);
-            }
-          } else if (element.tagName.toLowerCase() === 'input' && element.type === 'checkbox') {
-            // handle checkbox
-            if (argument.toLowerCase() === 'true' || argument === '1') {
-              element.checked = true;
-            } else if (argument.toLowerCase() === 'false' || argument === '0') {
-              element.checked = false;
-            }
-            element.dispatchEvent(new Event('change', { bubbles: true }));
-            console.log(`Checkbox ${argument.toLowerCase() === 'true' ? 'checked' : 'unchecked'}`);
-          } else {
-            console.warn(`Element is not a <select>, radio button, or checkbox and cannot handle argument "${argument}".`);
-          }
+        if (!element) {
+          console.log(`Could not find element ${element_id}`);
+          instruction = `Could not find element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
         }
-        result = {"operation": "do", "action": "Select Dropdown Option", "kwargs": {"instruction": instruction}};
+        if (!args.options) {
+          console.error(`Options not provided for <select> element.`);
+          instruction = `Options not provided for <select> element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
+        }
+        argument = args.options
+        element.style.setProperty('border', '4px solid green', 'important');
+        await waitForTimeout(1500);
+        element.style.border = '';
+        if (element.tagName.toLowerCase() === 'select') {
+          let optionFound = false;
+          for (let option of element.options) {
+            if (option.text === argument || option.value === argument) {
+              element.value = option.value;
+              option.selected = true;
+              element.dispatchEvent(new Event('change', { bubbles: true }));
+              optionFound = true;
+              console.log(`Selected option: ${option.text}`);
+              instruction = `Selected option ${argument} in element ${element_id}`
+              break;
+            }
+          }
+          if (!optionFound) {
+            console.error(`Option "${argument}" not found in <select> element.`);
+            instruction = `Option "${argument}" not found in <select> element ${element_id}`
+            result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+            return result
+          }
+        } else if (element.tagName.toLowerCase() === 'input' && element.type === 'radio') {
+          // handle radio
+          let radioGroup = document.getElementsByName(element.name);
+          let optionFound = false;
+          for (let radio of radioGroup) {
+            if (radio.value === argument || radio.id === argument) {
+              radio.checked = true;
+              radio.dispatchEvent(new Event('change', { bubbles: true }));
+              optionFound = true;
+              console.log(`Selected radio button: ${radio.value}`);
+              instruction = `Selected radio button ${argument} in element ${element_id}`
+              break;
+            }
+          }
+          if (!optionFound) {
+            console.error(`Radio button with value or id "${argument}" not found.`);
+            instruction = `Radio button with value or id "${argument}" not found in element ${element_id}`
+            result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+            return result
+          }
+        } else if (element.tagName.toLowerCase() === 'input' && element.type === 'checkbox') {
+          // handle checkbox
+          if (argument.toLowerCase() === 'true' || argument === '1') {
+            element.checked = true;
+          } else if (argument.toLowerCase() === 'false' || argument === '0') {
+            element.checked = false;
+          }
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log(`Checkbox ${argument.toLowerCase() === 'true' ? 'checked' : 'unchecked'}`);
+          instruction = `Checkbox ${argument.toLowerCase() === 'true' ? 'checked' : 'unchecked'} in element ${element_id}`
+        } else {
+          console.warn(`Element is not a <select>, radio button, or checkbox and cannot handle argument "${argument}".`);
+          instruction = `Element is not a <select>, radio button, or checkbox and cannot handle argument "${argument}" in element ${element_id}`
+          result = { "operation": "do", "action": actionName, "kwargs": { "instruction": instruction }, "bbox": element_bbox };
+          return result
+        }
+        result = { "operation": "do", "action": "Select Dropdown Option", "kwargs": { "instruction": instruction } };
       } else if (actionName === 'Wait') {
         await waitForTimeout(5000);
         result = { "operation": "do", "action": 'Wait' };
@@ -1017,6 +1168,7 @@ const ChatWindow = () => {
         throw new Error(`Unsupported action: ${actionName}`);
       }
 
+      console.log(`Returning result ${JSON.stringify(result)}`);
       return result
     }
   }
@@ -1044,10 +1196,10 @@ const ChatWindow = () => {
 
   const renderStepContent = (message) => {
     let part = message && message.parts && message.parts.length > 0 && message.parts[message.parts.length - 1];
-    return <div className='mt-[4px]'><Tag style={{backgroundColor: 'transparent'}} bordered={false} className="multiline-tag tag-small" icon={<PlayCircleFilled />} color="#2db7f5">{part.content.action}</Tag>
-        {part && part.content && part.content.kwargs && part.content.kwargs.argument ? <Tag style={{backgroundColor: 'transparent'}} bordered={false} className="multiline-tag tag-small" icon={<EditFilled />} color="#2db7f5">{part.content.kwargs.argument}</Tag> : null}
-        {part && part.content && part.content.kwargs && part.content.kwargs.instruction ? <Tag style={{backgroundColor: 'transparent'}} bordered={false} className="multiline-tag tag-small" icon={<MessageFilled />} color="#2db7f5">{part.content.kwargs.instruction}</Tag> : null}
-        </div>
+    return <div className='mt-[4px]'><Tag style={{ backgroundColor: 'transparent' }} bordered={false} className="multiline-tag tag-small" icon={<PlayCircleFilled />} color="#2db7f5">{part.content.action}</Tag>
+      {part && part.content && part.content.kwargs && part.content.kwargs.argument ? <Tag style={{ backgroundColor: 'transparent' }} bordered={false} className="multiline-tag tag-small" icon={<EditFilled />} color="#2db7f5">{part.content.kwargs.argument}</Tag> : null}
+      {part && part.content && part.content.kwargs && part.content.kwargs.instruction ? <Tag style={{ backgroundColor: 'transparent' }} bordered={false} className="multiline-tag tag-small" icon={<MessageFilled />} color="#2db7f5">{part.content.kwargs.instruction}</Tag> : null}
+    </div>
   }
 
   const renderStepItems = (message) => {
@@ -1058,15 +1210,15 @@ const ChatWindow = () => {
             {
               message.parts.map((part, index) => (
                 <>
-                <div key={index} className="text-[16px] flex flex-col mt-[4px]">
-                  {/* <div>Step: {part.content.round}</div> */}
-                  <div className="flex flex-row w-full">
-                    <Tag style={{backgroundColor: 'transparent'}} bordered={false} className="multiline-tag tag-small" icon={<PlayCircleFilled />} color="#2db7f5">{part.content.action}</Tag>
-                    {part && part.content && part.content.kwargs && part.content.kwargs.argument ? <Tag style={{backgroundColor: 'transparent'}} bordered={false} className="multiline-tag tag-small" icon={<EditFilled />} color="#2db7f5">{part.content.kwargs.argument}</Tag> : null}
+                  <div key={index} className="text-[16px] flex flex-col mt-[4px]">
+                    {/* <div>Step: {part.content.round}</div> */}
+                    <div className="flex flex-row w-full">
+                      <Tag style={{ backgroundColor: 'transparent' }} bordered={false} className="multiline-tag tag-small" icon={<PlayCircleFilled />} color="#2db7f5">{part.content.action}</Tag>
+                      {part && part.content && part.content.kwargs && part.content.kwargs.argument ? <Tag style={{ backgroundColor: 'transparent' }} bordered={false} className="multiline-tag tag-small" icon={<EditFilled />} color="#2db7f5">{part.content.kwargs.argument}</Tag> : null}
+                    </div>
+                    {part && part.content && part.content.kwargs && part.content.kwargs.instruction ? <div className='mt-[1px]'><Tag style={{ backgroundColor: 'transparent' }} bordered={false} className="multiline-tag tag-small" icon={<MessageFilled />} color="#2db7f5">{part.content.kwargs.instruction}</Tag></div> : null}
                   </div>
-                  {part && part.content && part.content.kwargs && part.content.kwargs.instruction ? <div className='mt-[1px]'><Tag style={{backgroundColor: 'transparent'}} bordered={false} className="multiline-tag tag-small" icon={<MessageFilled />} color="#2db7f5">{part.content.kwargs.instruction}</Tag></div> : null}
-                </div>
-                {index !== message.parts.length - 1 && <Divider style={{ borderColor: 'white' }} className="my-[6px]" key={index} />}
+                  {index !== message.parts.length - 1 && <Divider style={{ borderColor: 'white' }} className="my-[6px]" key={index} />}
                 </>
               ))
             }
@@ -1103,7 +1255,7 @@ const ChatWindow = () => {
                     </div>
                     <div className="flex flex-col w-full">
                       <Divider style={{ borderColor: 'white' }} className="my-[8px]"></Divider>
-                      <Collapse style={{backgroundColor: 'transparent'}} expandIconPosition="end" bordered={false}>
+                      <Collapse style={{ backgroundColor: 'transparent' }} expandIconPosition="end" bordered={false}>
                         <Collapse.Panel className="history-panel" header="history" key="1">
                           {renderStepItems(message)}
                         </Collapse.Panel>
@@ -1115,7 +1267,7 @@ const ChatWindow = () => {
             </div>
             ))}
 
-            {loading && 
+            {loading &&
               <div className="flex w-full gap-[4px] flex-col ">
                 <div className="flex gap-[4px] items-center height-[28px]">
                   <img src={AnswerSvg} className="w-[24px] h-[24px]" alt="answer" />

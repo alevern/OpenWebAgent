@@ -48,59 +48,78 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 const processChatInstruction = (instruction, sendResponse) => {
     console.log("Instruction provided:", instruction);
-    chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
-        console.log("Captured visible tab.");
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (chrome.runtime.lastError) {
-                console.error("chrome.tabs.query error:", chrome.runtime.lastError);
-                sendResponse({ status: "failure", message: chrome.runtime.lastError.message });
-                return;
-            }
+    chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+        const activeTab = tabs[0];
 
-            if (!tabs.length) {
-                console.error("No active tabs found.");
-                sendResponse({ status: "failure", message: "No active tabs found" });
-                return;
-            }
+        chrome.tabs.sendMessage(activeTab.id, { action: 'displaySoM' }, function(response) {
+            if (response && response.status === 'success') {
+                console.log('SOM script executed before capture successfully');
 
-            const currentTab = tabs[0];
-            const currentTabId = currentTab.id;
-            const currentTabUrl = currentTab.url;
+                chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
+                    console.log("Captured visible tab.");
+                    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                        if (chrome.runtime.lastError) {
+                            console.error("chrome.tabs.query error:", chrome.runtime.lastError);
+                            sendResponse({ status: "failure", message: chrome.runtime.lastError.message });
+                            return;
+                        }
 
-            if (!currentTabUrl || currentTabUrl.startsWith('devtools://')) {
-                console.error("Cannot access devtools URL.");
-                sendResponse({ status: "failure", message: "Cannot access devtools URL" });
-                return;
-            }
+                        if (!tabs.length) {
+                            console.error("No active tabs found.");
+                            sendResponse({ status: "failure", message: "No active tabs found" });
+                            return;
+                        }
 
-            chrome.scripting.executeScript({
-                target: { tabId: currentTabId },
-                func: getHtmlInfo,
-            }, (results) => {
-                console.log("Executed script:", results);
-                if (results && results[0] && results[0].result) {
-                    console.log("results[0].result: ", results[0].result);
-                    const { html_text, viewportSize } = results[0].result;
+                        const currentTab = tabs[0];
+                        const currentTabId = currentTab.id;
+                        const currentTabUrl = currentTab.url;
 
-                    const image = dataUrl;
-                    console.log("Image:", image);
-                    console.log("HTML:", html_text);
-                    console.log("viewportSize: ", viewportSize);
-                    sendResponse({
-                        status: "success",
-                        data: {
-                            instruction,
-                            html_text,
-                            image,
-                            currentTabUrl,
-                            viewportSize,
-                        },
+                        if (!currentTabUrl || currentTabUrl.startsWith('devtools://')) {
+                            console.error("Cannot access devtools URL.");
+                            sendResponse({ status: "failure", message: "Cannot access devtools URL" });
+                            return;
+                        }
+                        chrome.tabs.sendMessage(activeTab.id, { action: 'clearSoM' }, function(response) {
+                            if (response && response.status === 'success') {
+                                console.log('SOM script executed after capture successfully');
+                            } else {
+                                console.error('Failed to execute SOM script after capture:', response.message);
+                            }
+                        });
+                        chrome.scripting.executeScript({
+                            target: { tabId: currentTabId },
+                            func: getHtmlInfo,
+                        }, (results) => {
+                            console.log("Executed script:", results);
+                            if (results && results[0] && results[0].result) {
+                                console.log("results[0].result: ", results[0].result);
+                                const { html_text, viewportSize } = results[0].result;
+
+                                const image = dataUrl;
+                                console.log("Image:", image);
+                                console.log("HTML:", html_text);
+                                console.log("viewportSize: ", viewportSize);
+                                sendResponse({
+                                    status: "success",
+                                    data: {
+                                        instruction,
+                                        html_text,
+                                        image,
+                                        currentTabUrl,
+                                        viewportSize,
+                                    },
+                                });
+                            } else {
+                                console.log("Failed to execute my script.");
+                                sendResponse({ status: "failure", message: "Failed to execute my script" });
+                            }
+                        });
                     });
-                } else {
-                    console.log("Failed to execute script.");
-                    sendResponse({ status: "failure", message: "Failed to execute script" });
-                }
-            });
+                });
+            } else {
+                console.error('Failed to execute SOM script before capture:', response.message);
+                sendResponse({ status: "failure", message: response.message });
+            }
         });
     });
 }
@@ -384,7 +403,7 @@ async function getHtmlInfo() {
     const clickableCheckerScript = () => {
         var items = Array.prototype.slice.call(
             document.querySelectorAll('*')
-        ).map(function (element) {
+        ).map(function(element) {
             element.classList.add('possible-clickable-element');
             var vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
             var vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);

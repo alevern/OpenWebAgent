@@ -58,79 +58,80 @@ function apiFetch(config) {
 }
 
 /*
- * API请求封装（带验证信息）
- * config.method: [必须]请求method
- * config.url: [必须]请求url
- * config.data: 请求数据
- * config.formData: 是否以formData格式提交（用于上传文件）
- * config.success(res): 请求成功回调
- * config.fail(err): 请求失败回调
- * config.done(): 请求结束回调
+ * API request encapsulation (with validation information)
+ * config.method: [Required] Request method
+ * config.url: [Required] Request URL
+ * config.data: Request data
+ * config.formData: Whether to submit as formData format (used for file uploads)
+ * config.success(res): Callback for successful request
+ * config.fail(err): Callback for failed request
+ * config.done(): Callback when the request is complete
  */
 export function apiRequest(config) {
-    // 如果没有设置config.data，则默认为{}
+    // If config.data is not set, default to {}
     if (config.data === undefined) {
         config.data = {}
     }
 
-    // 如果没有设置config.method，则默认为post
+    // If config.method is not set, default to 'post'
     config.method = config.method || 'post'
 
-    // 请求头设置
+    // Set up request headers
     let headers = {}
     let data = null
 
     if (config.formData) {
-        // 上传文件的兼容处理，如果config.formData=true，则以form-data方式发起请求。
-        // fetch()会自动设置Content-Type为multipart/form-data，无需额外设置。
+        // Compatibility handling for file uploads. If config.formData=true, the request is made using form-data.
+        // fetch() will automatically set Content-Type to multipart/form-data, no additional setting needed.
         data = new FormData()
         Object.keys(config.data).forEach(function (key) {
             data.append(key, config.data[key])
         })
     } else {
-        // 如果不长传文件，fetch()默认的Content-Type为text/plain;charset=UTF-8，需要手动进行修改。
+        // If not uploading files, fetch() defaults Content-Type to text/plain;charset=UTF-8, so it needs to be manually modified.
         headers['Content-Type'] = 'application/json;charset=UTF-8'
         data = JSON.stringify(config.data)
     }
 
-    // 准备好请求的全部数据
+    // Prepare all the request data
     let axiosConfig = {
         method: config.method,
         headers,
         body: data,
     }
 
-    // 发起请求
+    // Send the request
     fetch(config.url, axiosConfig)
         .then((res) => res.json())
         .then((result) => {
-            // 请求结束的回调
+            // Callback when the request is complete
             config.done && config.done()
-            // 请求成功的回调
+            // Callback for a successful request
             config.success && config.success(result)
         })
         .catch(() => {
-            // 请求结束的回调
+            // Callback when the request is complete
             config.done && config.done()
-            // 请求失败的回调
+            // Callback for a failed request
             config.fail && config.fail(API_FAILED)
         })
 }
 
-// 委托background执行请求
+// Send a request to background
 function sendRequestToBackground(config) {
-    // chrome.runtime.sendMessage中只能传递JSON数据，不能传递file类型数据，因此直接从popup发起请求。
+    // In chrome.runtime.sendMessage, only JSON data can be transmitted, file types cannot be sent,
+    // so the request is sent directly from the popup.
     // The message to send. This message should be a JSON-ifiable object.
-    // 详情参阅：https://developer.chrome.com/extensions/runtime#method-sendMessage
+    // For more details, refer to: https://developer.chrome.com/extensions/runtime#method-sendMessage
     if (chrome && chrome.runtime) {
         chrome.runtime.sendMessage(
             {
-                // 带上标识，让background script接收消息时知道此消息是用于请求API
+                // Include an identifier so that the background script knows this message is for an API request
                 contentRequest: 'apiRequest',
                 config: config,
             },
             (result) => {
-                // 接收background script的sendResponse方法返回的消数据result
+                // Receive the result data returned by the background script's sendResponse method
                 config.done && config.done()
                 if (result.result === 'succ') {
                     config.success && config.success(result)
@@ -140,6 +141,6 @@ function sendRequestToBackground(config) {
             }
         )
     } else {
-        console.log('未找到chrome API')
+        console.log('Chrome API not found')
     }
 }

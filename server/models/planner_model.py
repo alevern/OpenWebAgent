@@ -26,7 +26,9 @@ class PlannerModel(APIModel):
         instruction = kwargs["instruction"]
         contents = kwargs['content']
         planner_prompt = self.model.get_planner_prompt(instruction, turn_count, html, contents)
+        print(f"Planner prompt:\n{planner_prompt}")
         response = self.model.generate(planner_prompt)
+        print(f"Planner answer:\n{response}")
         
         print(f"Planner request lasting: {time.time() - start_time} ms")
 

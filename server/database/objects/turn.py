@@ -11,6 +11,7 @@ class Turn(Document):
     prompt = StringField()
     response = StringField()
     parsed_action = DictField()
+    action_return = StringField()
 
     html_text = StringField()
     screenshot = ImageField()
@@ -67,6 +68,7 @@ class Turn(Document):
             "round": self.round,
             "response": self.response,
             "parsed_action": self.parsed_action,
+            "action_return": self.action_return,
             "created_at": str(self.created_at),
             "updated_at": str(self.updated_at)
         }

@@ -1705,7 +1705,7 @@
                     width: labelRect.width,
                     height: labelRect.height,
                 });
-                element.setAttribute('data-SoM', `${i}`);
+                element.setAttribute('data-label-id', `${i}`);
             }
         }
         getColorByLuminance(color) {
@@ -1719,7 +1719,7 @@
         loader = new Loader();
         ui = new UI();
         async display() {
-            this.log('Displaying...');
+            this.log('Displaying SoM...');
             const startTime = performance.now();
             const elements = await this.loader.loadElements();
             this.clear();
@@ -1732,14 +1732,15 @@
             if (wrapper) {
                 wrapper.innerHTML = '';
             }
-            document.querySelectorAll('[data-som]').forEach((element) => {
-                element.removeAttribute('data-som');
+            document.querySelectorAll('[data-label-id]').forEach((element) => {
+                element.removeAttribute('data-label-id');
             });
         }
         hide() {
             document
                 .querySelectorAll('.SoM')
                 .forEach((element) => (element.style.display = 'none'));
+            this.log('SoM hiden!');
         }
         show() {
             document
@@ -1747,7 +1748,7 @@
                 .forEach((element) => (element.style.display = 'block'));
         }
         resolve(id) {
-            return document.querySelector(`[data-som="${id}"]`);
+            return document.querySelector(`[data-label-id="${id}"]`);
         }
         log(...args) {
             console.log('%cSoM', 'color: white; background: #007bff; padding: 2px 5px; border-radius: 5px;', ...args);
@@ -1770,20 +1771,30 @@
     window.SoM.log('Ready!');
 
     window.addEventListener('message', (event) => {
-        if (event.data.type === 'displaySoM') {
-            if (window.SoM) {
-                window.SoM.display().then(() => {
-                    console.log('SOM displayed before capture');
-                    window.postMessage({ type: 'SOM_BEFORE_CAPTURE_DONE' }, '*');
-                });
-            }
-        } else if (event.data.type === 'clearSoM') {
-            if (window.SoM) {
-                window.SoM.clear().then(() => {
-                    console.log('SOM cleared after capture');
-                    window.postMessage({ type: 'SOM_AFTER_CAPTURE_DONE' }, '*');
-                });
-            }
+        if (!window.SoM) {
+            console.log('[SoM.JS] SoM not found');
+            return;
+        }
+        switch (event.data.type) {
+            case 'SOM_DISPLAY':
+                window.SoM.display();
+                window.postMessage({ type: 'SOM_DISPLAY_DONE' }, '*');
+                break;
+            case 'SOM_CLEAR':
+                window.SoM.clear();
+                window.postMessage({ type: 'SOM_CLEAR_DONE' }, '*');
+                break;
+            case 'SOM_HIDE':
+                window.SoM.hide();
+                window.postMessage({ type: 'SOM_HIDE_DONE' }, '*');
+                break;
+            case 'SOM_SHOW':
+                window.SoM.show();
+                window.postMessage({ type: 'SOM_SHOW_DONE' }, '*');
+                break;
+            default:
+                console.log('[SoM.JS] Unknown message type:', event.data.type);
+                break;
         }
     });
 }));

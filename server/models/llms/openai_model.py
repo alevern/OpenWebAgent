@@ -1,5 +1,6 @@
 # You should install openai with version >= 1.0.0
 import os
+import json
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict
@@ -34,11 +35,16 @@ class OpenAIModel(BaseModel):
         if not self.client:
             raise RuntimeError("OpenAI client not initialized.")
 
+        print(f"model used: {self.model}")
+        for message in messages:
+            print(json.dumps(message, indent=4))
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             max_tokens=1024,
+            response_format={ "type": "json_object" }
         )
+        print(f"openai response:\n{response.choices[0].message.content}")
 
         return response.choices[0].message.content
 
